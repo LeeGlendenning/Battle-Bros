@@ -1,0 +1,608 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Battle Bros</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<script src="http://localhost:8000/socket.io/socket.io.js"></script>
+    <link rel=stylesheet href="../base.css"/>
+	<link rel="stylesheet" type="text/css" href="../style.css">
+</head>
+<body>
+
+	<script src="../Three.js"></script>
+	<script src="../Detector.js"></script>
+	<script src="../Stats.js"></script>
+	<script src="../OrbitControls.js"></script>
+	<script src="../KeyboardState.js"></script>
+	<script src="../THREEx.FullScreen.js"></script>
+	<script src="../THREEx.WindowResize.js"></script>
+
+	<!-- Code to display an information button and box when clicked. 
+	<script src="js/jquery-1.9.1.js"></script>
+	<script src="js/jquery-ui.js"></script>
+	<link rel=stylesheet href="css/jquery-ui.css" />
+	<link rel=stylesheet href="css/info.css"/>
+	<script src="js/info.js"></script>-->
+	<div id="infoButton"></div>
+	<div id="infoBox" title="Demo Information">
+	<br/><br/> 
+	</div>
+	<!-- ------------------------------------------------------------ -->
+
+	<div id="ThreeJS" style="position: absolute; left:0px; top:0px"></div>
+	<script>
+
+
+	// standard global variables
+	var container, scene, camera, renderer, controls, stats;
+	var clock = new THREE.Clock();
+
+	var keyboard = new KeyboardState();
+	var first = true;
+
+	// custom global variables
+	var player, gun, barrel, angle=0, wall;//angle for gun
+	var mouse = new THREE.Vector2();
+	var bullets, bulletDirs;//arrays
+	var socket, user = "User";
+	var remotePlayers;
+	var hp, text2, hpLabel, deathLabel;
+	var dead;
+	init();
+	animate();
+
+	
+	function setEventHandlers() {
+
+		// Socket connection successful
+		socket.on("connect", onSocketConnected);
+
+		// Socket disconnection
+		socket.on("disconnect", onSocketDisconnect);
+
+		// New player message received
+		socket.on("new player", onNewPlayer);
+
+		// Player update message received
+		socket.on("update player", onUpdatePlayer);
+
+		// Player removed message received
+		socket.on("remove player", onRemovePlayer);
+		
+		//show that player is dead
+		socket.on("display death", onDisplayDeath);
+	};
+	
+	function onDisplayDeath(data){
+		setTimeout(function() { respawn(data); }, 5000);
+		var deadPlayer = playerById(data.id);
+		console.log("dead player: "+data.id);
+		deadPlayer.player.material.transparent = true;
+		deadPlayer.player.material.opacity = 0.0;
+		deadPlayer.gun.material.transparent = true;
+		deadPlayer.gun.material.opacity = 0.0;
+		deadPlayer.barrel.material.transparent = true;
+		deadPlayer.barrel.material.opacity = 0.0;
+	}
+
+	// Socket connected
+	function onSocketConnected() {
+		console.log("Connected to socket server");
+
+		// Send local player data to the game server
+		var pObj = {x:player.position.x, y:player.position.y, z:player.position.z};
+		var gObj = {x:gun.position.x, y:gun.position.y, z:gun.position.z};
+		var bObj = {x:barrel.position.x, y:barrel.position.y, z:barrel.position.z};
+		var bmesh = [];
+		for (var i = 0; i < bullets.length; i ++){
+			bmesh[i] = {x:bullets[i].mesh.position.x, z:bullets[i].mesh.position.z, source:bullets[i].source};
+		}
+		socket.emit("new player", {user: user, player: pObj, gun: gObj, barrel: bObj, bmesh: bmesh, angle:angle});
+	};
+	
+	// Socket disconnected
+	function onSocketDisconnect() {
+		console.log("Disconnected from socket server");
+	};
+	
+	// New player
+	function onNewPlayer(data) {
+		console.log("New player connected: "+data.id);
+		console.log(data.player+data.gun+data.barrel);
+		
+		// Add new player to the remote players array
+		//add player body
+		var geometry = new THREE.SphereGeometry( 30, 32, 16 );
+		var material = new THREE.MeshLambertMaterial( { color: 0xff0000 } );
+		var tempPlayer = new THREE.Mesh( geometry, material );
+		tempPlayer.position.set(data.player.x, data.player.y, data.player.z);
+		
+		//add gun
+		var cubegeometry = new THREE.CubeGeometry(20,15,10);
+		cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( data.player.x, data.player.y, data.player.z ) );
+		var cubematerial = new THREE.MeshBasicMaterial( { color: 0x000000 } );
+		var tempGun = new THREE.Mesh( cubegeometry, cubematerial );
+		tempGun.position.set(data.gun.x,data.gun.y,data.gun.z);
+		
+		//barrel at end of gun
+		var cubegeometry = new THREE.CubeGeometry(5,5,5);
+		cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( data.player.x, data.player.y, data.player.z ) );
+		var cubematerial = new THREE.MeshBasicMaterial( { color: 0x000000 } );
+		var tempBarrel = new THREE.Mesh( cubegeometry, cubematerial );
+		tempBarrel.position.set(data.barrel.x,data.barrel.y,data.barrel.z);
+		
+		remotePlayers.push({player:tempPlayer, gun:tempGun, barrel:tempBarrel, id:data.id});
+		scene.add(remotePlayers[remotePlayers.length-1].player);
+		remotePlayers[remotePlayers.length-1].player.add(remotePlayers[remotePlayers.length-1].gun);
+		remotePlayers[remotePlayers.length-1].gun.add(remotePlayers[remotePlayers.length-1].barrel);
+	};
+
+	// update player
+	function onUpdatePlayer(data) {
+		var movePlayer = playerById(data.id);
+		
+		// Player not found
+		if (!movePlayer) {
+			console.log("Player not found: "+data.id);
+			return;
+		};
+		
+		movePlayer.player.position.set(data.player.x, data.player.y, data.player.z);
+		movePlayer.gun.position.set(data.gun.x,data.gun.y,data.gun.z);
+		movePlayer.barrel.position.set(data.barrel.x,data.barrel.y,data.barrel.z);
+		movePlayer.angle = data.angle;
+		movePlayer.gun.rotation.y = movePlayer.angle;
+		if (typeof movePlayer.bullets == "undefined"){
+			console.log("defining movePlayer.bullets.");
+			movePlayer.bullets = [];
+		}
+		
+		//remove old bullets
+		for (var i = 0; i < movePlayer.bullets.length; i ++){
+			scene.remove(movePlayer.bullets[i]);
+		}
+		movePlayer.bullets = [];
+		
+		//make new bullets
+		for (var i = 0; i < data.bmesh.length; i ++){
+			var cubegeometry = new THREE.CubeGeometry(5,5,5);
+			var cubematerial = new THREE.MeshBasicMaterial( { color: 0xffffff } );
+			cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( data.bmesh[i].source.x, data.bmesh[i].source.y, data.bmesh[i].source.z ) );
+			movePlayer.bullets[i] = new THREE.Mesh( cubegeometry, cubematerial);
+			movePlayer.bullets[i].position.set(data.bmesh[i].x,17.5,data.bmesh[i].z);
+			
+			scene.add(movePlayer.bullets[i]);
+		}
+		
+		//check for collision
+		for (var i = 0; i < data.bmesh.length; i ++){
+			var x = data.bmesh[i].x + data.bmesh[i].source.x;
+			var z = data.bmesh[i].z + data.bmesh[i].source.z;
+			if (hp > 0 && x < player.position.x + 30 && x > player.position.x - 30 && z < player.position.z + 30 && z > player.position.z - 30){
+				hp --;
+				hpLabel.innerHTML = "hp: " + hp;
+				console.log("OUCH! hp="+hp);
+				if (hp == 0){
+					//scene.remove(player);
+					setTimeout(function() { respawnClient(); }, 5000);
+					console.log("player is dead. telling others");
+					socket.emit("player dead", "bummer");
+					
+					//temporarily disable mouse
+					document.onmousemove = null;
+					document.onmousedown = null;
+					
+					/*text2 = document.createElement('div');
+					text2.style.position = 'absolute';
+					text2.style.width = 100;
+					text2.style.height = 100;
+					text2.style.backgroundColor = "white";
+					text2.innerHTML = "You have died!";
+					text2.style.top = 200 + 'px';
+					text2.style.left = 400 + 'px';
+					document.body.appendChild(text2);*/
+				}
+			}
+		}
+	};
+	
+	function respawnClient(){
+		document.onmousemove = handleMouseMove;
+		document.onmousedown = handleMouseClick;
+		hp = 50;
+		hpLabel.innerHTML = "hp: " + hp;
+	}
+	
+	
+	function respawn(data){
+		console.log("respawning!");
+		//document.body.removeChild(deathLabel);
+		//deathLabel.innerHTML = "";
+		var deadPlayer = playerById(data.id);
+		console.log("dead player: "+data.id);
+		deadPlayer.player.material.transparent = false;
+		deadPlayer.player.material.opacity = 1.0;
+		deadPlayer.gun.material.transparent = false;
+		deadPlayer.gun.material.opacity = 1.0;
+		deadPlayer.barrel.material.transparent = false;
+		deadPlayer.barrel.material.opacity = 1.0;
+		
+		//document.onmousemove = handleMouseMove;
+		//document.onmousedown = handleMouseClick;
+		//document.body.removeChild(text2);
+		//scene.add(player);
+	}
+	
+	// Remove player
+	function onRemovePlayer(data) {
+		var removePlayer = playerById(data.id);
+		console.log(remotePlayers.length+"rming player: " + data.id);
+		// Player not found
+		if (!removePlayer) {
+			console.log("Player not found: "+data.id);
+			return;
+		};
+
+		// Remove player from array
+		scene.remove(remotePlayers[remotePlayers.indexOf(removePlayer)].player);
+		remotePlayers.splice(remotePlayers.indexOf(removePlayer), 1);
+		console.log(remotePlayers.length);
+	};
+	
+	
+	// Find player by ID
+	function playerById(id) {
+		var i;
+		for (i = 0; i < remotePlayers.length; i++) {
+			if (remotePlayers[i].id == id)
+				return remotePlayers[i];
+		};
+		
+		return false;
+	};
+
+
+	function init() 
+	{
+		hp = 50;
+		hpLabel = document.createElement('div');
+		hpLabel.style.position = 'absolute';
+		hpLabel.style.width = 100;
+		hpLabel.style.height = 100;
+		hpLabel.innerHTML = "hp: " + hp;
+		hpLabel.style.top = 10 + 'px';
+		hpLabel.style.left = 10 + 'px';
+		document.body.appendChild(hpLabel);
+		dead = [];
+		// Initialise socket connection
+		socket = io.connect("http://localhost", {port: 8000, transports: ["websocket"]});
+		angle=0;
+		bullets = [];
+		bulletDirs = [];
+		document.onmousemove = handleMouseMove;
+		document.onmousedown = handleMouseClick;
+		// SCENE
+		scene = new THREE.Scene();
+		
+		// CAMERA
+		var SCREEN_WIDTH = window.innerWidth, SCREEN_HEIGHT = window.innerHeight;
+		var VIEW_ANGLE = 45, ASPECT = SCREEN_WIDTH / SCREEN_HEIGHT, NEAR = 0.1, FAR = 20000;
+		camera = new THREE.PerspectiveCamera( VIEW_ANGLE, ASPECT, NEAR, FAR);
+		scene.add(camera);
+		camera.position.set(0,1300,500);
+		camera.lookAt(scene.position);
+		// RENDERER
+		if ( Detector.webgl )
+			renderer = new THREE.WebGLRenderer( {antialias:true} );
+		else
+			renderer = new THREE.CanvasRenderer(); 
+			
+		renderer.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+		container = document.getElementById( 'ThreeJS' );
+		container.appendChild( renderer.domElement );
+		// EVENTS
+		THREEx.WindowResize(renderer, camera);
+		THREEx.FullScreen.bindKey({ charCode : 'm'.charCodeAt(0) });
+		// CONTROLS
+		controls = new THREE.OrbitControls( camera, renderer.domElement );
+		// STATS
+		stats = new Stats();
+		stats.domElement.style.position = 'absolute';
+		stats.domElement.style.bottom = '0px';
+		stats.domElement.style.zIndex = 100;
+		container.appendChild( stats.domElement );
+		// LIGHT
+		var light = new THREE.PointLight(0xffffff);
+		light.position.set(0,250,0);
+		scene.add(light);
+		// FLOOR
+		var floorTexture = new THREE.ImageUtils.loadTexture( '../terrain.png' );//grass.png
+		floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping; 
+		floorTexture.repeat.set( 1, 1 );
+		var floorMaterial = new THREE.MeshBasicMaterial( { map: floorTexture, side: THREE.DoubleSide } );
+		var floorGeometry = new THREE.PlaneGeometry(2000, 1000, 10, 10);
+		var floor = new THREE.Mesh(floorGeometry, floorMaterial);
+		floor.position.y = -0.5;
+		floor.rotation.x = Math.PI/2;
+		//floor.rotation.z = -Math.PI/2;
+		scene.add(floor);
+		
+		//WALL
+		var cubegeometry = new THREE.CubeGeometry(10,100,250);
+		//cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( player.position.x, player.position.y, player.position.z ) );
+		var cubematerial = new THREE.MeshBasicMaterial( { color: 0x000000 } );
+		wall = new THREE.Mesh( cubegeometry, cubematerial );
+		wall.position.set(40,50,0);
+		scene.add(wall);
+		// SKYBOX
+		var skyBoxGeometry = new THREE.CubeGeometry( 10000, 10000, 10000 );
+		var skyBoxMaterial = new THREE.MeshBasicMaterial( { color: 0x9999ff, side: THREE.BackSide } );
+		var skyBox = new THREE.Mesh( skyBoxGeometry, skyBoxMaterial );
+		scene.add(skyBox);
+		
+		////////////
+		// PLAYER //
+		////////////
+		
+		var geometry = new THREE.SphereGeometry( 30, 32, 16 );
+		var material = new THREE.MeshLambertMaterial( { color: 0x0000ff } );
+		player = new THREE.Mesh( geometry, material );
+		player.position.set(0,30,0);
+		scene.add(player);
+		
+		////////////
+		//   GUN  //
+		////////////
+
+		var cubegeometry = new THREE.CubeGeometry(20,15,10);
+		cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( player.position.x, player.position.y, player.position.z ) );
+		var cubematerial = new THREE.MeshBasicMaterial( { color: 0x000000 } );
+		gun = new THREE.Mesh( cubegeometry, cubematerial );
+		gun.position.set(40,-15,0);
+		player.add(gun);
+		//barrel at end of gun
+		var cubegeometry = new THREE.CubeGeometry(5,5,5);
+		cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( player.position.x, player.position.y, player.position.z ) );
+		var cubematerial = new THREE.MeshBasicMaterial( { color: 0x000000 } );
+		barrel = new THREE.Mesh( cubegeometry, cubematerial );
+		barrel.position.set(12.5,0,0);
+		gun.add(barrel);
+		
+		remotePlayers = [];
+		setEventHandlers();
+		
+		
+	}
+	
+	function playerWallCollision(moveDistance){
+		if (player.x+moveDistance ){
+			
+		}
+	}
+	
+	function handleMouseClick(event){
+		var cubegeometry = new THREE.CubeGeometry(5,5,5);
+		cubegeometry.applyMatrix( new THREE.Matrix4().makeTranslation( player.position.x, player.position.y, player.position.z ) );
+		var cubematerial = new THREE.MeshBasicMaterial( { color: 0x000000 } );
+		bullets[bullets.length] = {mesh: new THREE.Mesh( cubegeometry, cubematerial), dir: new THREE.Vector2(gun.position.x, gun.position.z)};
+		bullets[bullets.length-1].mesh.position.set(gun.position.x,17.5,gun.position.z);
+		bullets[bullets.length-1].source = new THREE.Vector3(player.position.x, player.position.y, player.position.z);
+		scene.add(bullets[bullets.length-1].mesh);
+	}
+	
+	function handleMouseMove(event) {
+		//update mouse position
+		mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+		mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+		
+		//rotate gun based on mouse position
+		var projector = new THREE.Projector();
+		var vector = new THREE.Vector3(mouse.x, mouse.y,0.5 );
+
+		projector.unprojectVector( vector, camera );
+		var dir = vector.sub( camera.position ).normalize();
+		var distance = - camera.position.y / dir.y;
+		var pos = camera.position.clone().add( dir.multiplyScalar( distance ) );
+		
+		var relMouseX = pos.x - player.position.x;
+		var relMouseY = pos.z - player.position.z;
+		
+		//rotate gun according to mouse position
+		angle = Math.atan(Math.abs(relMouseY)/Math.abs(relMouseX));
+		var z = angle*180/(Math.PI);
+		if (relMouseY > 0){
+			z *= -1;
+		}
+		var x;
+		if (relMouseX <= 0){
+			x = 90 - Math.abs(z);
+		}else{
+			x = -1*(90 - Math.abs(z));
+		}
+		if (relMouseX < 0 && barrel.position.x > 0 || relMouseX > 0 && barrel.position.x < 0){
+			barrel.position.x *= -1;
+		}
+		x = 40*(x/100);
+		z = 40*(z/100);
+		gun.position.x = -x;
+		gun.position.z = -z;
+		
+		if (relMouseX < 0 && relMouseY > 0 || relMouseX > 0 && relMouseY < 0){
+			//all good
+		}else{
+			angle *= -1;
+		}
+		
+		gun.rotation.y = angle;
+	  }
+
+	function animate() 
+	{
+		requestAnimationFrame( animate );
+		render();		
+		update();
+	}
+	
+	//movement
+	function update()
+	{
+		keyboard.update();
+		var diagMod = 0.75;
+		var xBoundary = 945;
+		var zBoundary = 455;
+		var moveDistance = 500 * clock.getDelta(); 
+		var offsetx = 0, offsetz = 0;
+		
+		//move bullets
+		for (var i = 0; i < bullets.length; i ++){
+			
+			if (player.position.x < 0)
+				offsetx = -1*player.position.x;
+			else
+				offsetx = player.position.x;
+			if (player.position.z < 0)
+				offsetz = -1*player.position.z;
+			else
+				offsetz = player.position.z;
+			
+			try{
+				while (bullets[i].mesh.position.x > (xBoundary+offsetx) || bullets[i].mesh.position.x < -(xBoundary+offsetx) || bullets[i].mesh.position.z > (zBoundary+offsetz) || bullets[i].mesh.position.z < -(zBoundary+offsetz)){
+					scene.remove(bullets[i].mesh);
+					bullets.splice(i, 1);
+					if (typeof bullets != "undefined" && bullets.length != 0){
+						bullets[i].mesh.position.x += bullets[i].dir.x*0.6;
+						bullets[i].mesh.position.z += bullets[i].dir.y*0.6;
+					}
+				}
+				if (typeof bullets != "undefined" && bullets.length != 0){
+					bullets[i].mesh.position.x += bullets[i].dir.x*0.6;
+					bullets[i].mesh.position.z += bullets[i].dir.y*0.6;
+				}
+				if (player.position.x < 0)
+					offsetx = -1*player.position.x;
+				else
+					offsetx = player.position.x;
+				if (player.position.z < 0)
+					offsetz = -1*player.position.z;
+				else
+					offsetz = player.position.z;
+				//console.log("bullet:"+bullets[i].mesh.position.x+","+bullets[i].mesh.position.z);
+			}catch(err){}
+			
+		}
+		
+		//only A pressed (left)
+		if (keyboard.pressed("A") && !keyboard.pressed("W") && !keyboard.pressed("S") && !keyboard.pressed("D")){
+			if ((player.position.x-moveDistance) < -xBoundary){
+				player.position.x = -xBoundary;
+			}else{
+				player.translateX( -moveDistance );
+			}
+		}
+		//only W pressed (up)
+		if (keyboard.pressed("W") && !keyboard.pressed("A") && !keyboard.pressed("D") && !keyboard.pressed("S")){
+			if ((player.position.z-moveDistance) < -zBoundary){
+				player.position.z = -zBoundary;
+			}else{
+				player.translateZ( -moveDistance );
+			}
+		}
+		//only S pressed (down)
+		if (keyboard.pressed("S") && !keyboard.pressed("A") && !keyboard.pressed("D") && !keyboard.pressed("W")){
+			if ((player.position.z+moveDistance) > zBoundary){
+				player.position.z = zBoundary;
+			}else{
+				player.translateZ( moveDistance );
+			}
+		}
+		//only D pressed (right)
+		if (keyboard.pressed("D") && !keyboard.pressed("A") && !keyboard.pressed("W") && !keyboard.pressed("S")){
+			if ((player.position.x+moveDistance) > xBoundary){
+				player.position.x = xBoundary;
+			}else{
+				player.translateX( moveDistance );
+			}
+		}
+		//A and W pressed (left/up)
+		if ( keyboard.pressed("A") && keyboard.pressed("W")){
+			if ((player.position.x-moveDistance*diagMod) < -xBoundary){//left
+				player.position.x = -xBoundary;
+			}else{
+				player.translateX( -moveDistance*diagMod );
+			}
+			if ((player.position.z-moveDistance*diagMod) < -zBoundary){//up
+				player.position.z = -zBoundary;
+			}else{
+				player.translateZ( -moveDistance*diagMod );
+			}
+		}
+		//D and W pressed (right/up)
+		if ( keyboard.pressed("D") && keyboard.pressed("W")){
+			if ((player.position.x+moveDistance*diagMod) > xBoundary){//right
+				player.position.x = xBoundary;
+			}else{
+				player.translateX(  moveDistance*diagMod );
+			}
+			if ((player.position.z-moveDistance*diagMod) < -zBoundary){//up
+				player.position.z = -zBoundary;
+			}else{
+				player.translateZ( -moveDistance*diagMod )
+			}
+		}
+		//A and S pressed (left/down)
+		if ( keyboard.pressed("A") && keyboard.pressed("S")){
+			if ((player.position.x-moveDistance*diagMod) < -xBoundary){//left
+				player.position.x = -xBoundary;
+			}else{
+				player.translateX(  -moveDistance*diagMod );
+			}
+			if ((player.position.z+moveDistance*diagMod) > zBoundary){//down
+				player.position.z = zBoundary;
+			}else{
+				player.translateZ( moveDistance*diagMod )
+			}
+		}
+		//D and S pressed (right/down)
+		if ( keyboard.pressed("D") && keyboard.pressed("S")){
+			if ((player.position.x+moveDistance*diagMod) > xBoundary){//right
+				player.position.x = xBoundary;
+			}else{
+				player.translateX(  moveDistance*diagMod );
+			}
+			if ((player.position.z+moveDistance*diagMod) > zBoundary){//down
+				player.position.z = zBoundary;
+			}else{
+				player.translateZ( moveDistance*diagMod )
+			}
+		}	
+		
+		//if (first){
+			first = false;
+			controls.update();
+			//controls.enabled = false;
+		//}
+		
+		stats.update();
+		var pObj = {x:player.position.x, y:player.position.y, z:player.position.z};
+		var gObj = {x:gun.position.x, y:gun.position.y, z:gun.position.z};
+		var bObj = {x:barrel.position.x, y:barrel.position.y, z:barrel.position.z};
+		var bmesh=[];
+		for (var i = 0; i < bullets.length; i ++){
+			bmesh[i] = {x:bullets[i].mesh.position.x, z:bullets[i].mesh.position.z, source:bullets[i].source};
+		}
+		socket.emit("update player", {user: user, player: pObj, gun: gObj, barrel: bObj, bmesh:bmesh, angle:angle});
+	}
+
+	function render() 
+	{
+		renderer.render( scene, camera );
+	}
+
+	</script>
+	<footer style="padding-top:50px;width:300px;display:block;margin-left:42.2%;">
+		<p>Copyright 2015 Lee Glendenning</p>
+	</footer>
+</body>
+</html>

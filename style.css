@@ -1,0 +1,102 @@
+
+body {
+    background-image: url("mochaGrunge.png");
+    background-repeat: repeat;
+	cursor: url("crossHair.cur"), default;
+}
+
+#canvas{
+	border: 2px solid;
+	display: block;
+	margin:0 auto;
+}
+
+input:hover, a:hover{
+	cursor: url("crossHair.cur"), default;
+}
+
+.header{
+}
+
+.login{
+	display:block;
+	float:right;
+	padding-bottom:2%;
+}
+
+#createDiv{
+	width:50%;
+	margin:0 auto;
+}
+#createDiv fieldset{
+	width:150%;
+	padding-left:50%;
+	margin-left:-50%;
+	padding-top:10%;
+	padding-bottom:10%;
+}
+#createDiv form  { display: table; }
+#createDiv p     { display: table-row;  }
+#createDiv label { display: table-cell; }
+#createDiv input { display: table-cell; }
+
+#register{
+	//width:50%;
+	margin:0 auto;
+	text-align:center;
+}
+
+#home{
+	font-size:130%;
+}
+/* unvisited link */
+#home:link {
+	color: white;
+}
+#home:visited{
+	color: white;
+}
+#home:hover {
+	color: black;
+}
+#home:active {
+	color: black;
+}
+
+#BBtitle{
+	width:75%;
+	display:block;
+	margin: 0 auto;
+}
+
+#BBtitleGameplay{
+	width:50%;
+	display:block;
+	margin: 0 auto;
+}
+
+.playnow{
+	width:15%;
+	display:block;
+	margin: 0 auto;
+	margin-top:2%;
+}
+
+.playnow a img:hover, .createaccount a img:hover{
+	opacity:0.8;
+}
+
+#BBplay{
+	width:100%;
+}
+
+.createaccount{
+	width:15%;
+	display:block;
+	margin: 0 auto;
+	margin-top:5%;
+}
+
+#BBcreate{
+	width:100%;
+}
